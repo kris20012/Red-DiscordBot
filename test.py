@@ -4,7 +4,6 @@ import os
 def hypothetical_reconstructed_reference(width, height):
     return np.full((height, width), 128, dtype=np.uint8)
 
-
 def mean_absolute_error(block1, block2):
     """Calculate Mean Absolute Error (MAE) between two blocks."""
     return np.mean(np.abs(block1.astype(np.int16) - block2.astype(np.int16)))
@@ -44,14 +43,21 @@ def calculate_residual(current_block, predicted_block):
     """Calculate the residual block by subtracting the predicted block from the current block."""
     return current_block.astype(np.int16) - predicted_block.astype(np.int16)
 
+def dump_residuals(approximated_residual, block_position, block_size, filename):
+    """Dump approximated residual values into a text file preserving block coordinates."""
+    with open(filename, 'a') as f:  # Append to file
+        for i in range(block_size):
+            for j in range(block_size):
+                f.write(f'Block Position: ({block_position[0] + i}, {block_position[1] + j}), Residual Value: {approximated_residual[i, j]}\n')
+
 def process_frame(Y_current, ref_frame, block_size, search_range, motion_vectors):
     """Process each block in the current frame using full search."""
     # Split the current frame into blocks
     blocks = split_into_blocks(Y_current, block_size)
-    
+
     total_mae = 0
     num_blocks = len(blocks)
-    
+
     # For each block, find the best matching block in the reference frame
     for current_block, block_position in blocks:
         mae, motion_vector = full_search(current_block, ref_frame, block_position, block_size, search_range)
@@ -61,11 +67,11 @@ def process_frame(Y_current, ref_frame, block_size, search_range, motion_vectors
                 motion_vectors.append((block_position, motion_vector))  # Store block position and motion vector
         else:
             num_blocks -= 1 
-        
+
         # Calculate the predicted block based on motion vector
         pred_y = block_position[0] + motion_vector[0]
         pred_x = block_position[1] + motion_vector[1]
-        
+
         if 0 <= pred_y < ref_frame.shape[0] - block_size and 0 <= pred_x < ref_frame.shape[1] - block_size:
             predicted_block = ref_frame[pred_y:pred_y + block_size, pred_x:pred_x + block_size]
         else:
@@ -74,13 +80,10 @@ def process_frame(Y_current, ref_frame, block_size, search_range, motion_vectors
         # Calculate residual block
         residual_block = calculate_residual(current_block, predicted_block)
         
-        # Round the residual block for n = 1, 2, 3
+        # Round the residual block for n = 1, 2, 3 and dump to file
         for n in range(1, 4):
             approximated_residual = round_to_nearest_multiple(residual_block, n)
-            # Here you can store or display the approximated residual as needed
-            
-        # Store the motion vector with its block position
-        motion_vectors.append((block_position[0], block_position[1], motion_vector[0], motion_vector[1]))
+            dump_residuals(approximated_residual, block_position, block_size, 'approximated_residuals.txt')
 
     # Calculate average MAE for the frame
     average_mae = total_mae / num_blocks
@@ -89,9 +92,8 @@ def process_frame(Y_current, ref_frame, block_size, search_range, motion_vectors
 def dump_motion_vectors(motion_vectors, filename):
     """Dump motion vectors to a text file."""
     with open(filename, 'w') as f:
-        for block_y, block_x, mv_y, mv_x in motion_vectors:
-            f.write(f'Block Position: ({block_y}, {block_x}), Motion Vector: ({mv_y}, {mv_x})\n')
-
+        for block_position, motion_vector in motion_vectors:
+            f.write(f'Block Position: {block_position}, Motion Vector: {motion_vector}\n')
 
 input_directory = 'y_only_files'
 y_files = get_yuv_files(input_directory)
@@ -106,7 +108,7 @@ block_sizes = [2, 8, 64]
 motion_vectors_all = []
 
 for file_path in y_files_full_path:
-    Y = load_y_component(file_path)
+    Y = load_y_component(file_path, height, width)
 
     if frame_counter == 0:
         Y_reference = hypothetical_reconstructed_reference(width, height)

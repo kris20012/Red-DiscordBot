@@ -1,3 +1,6 @@
+import numpy as np
+import os
+
 def load_y_component(file_path, height, width):
     """Load the Y component from a Y-only file."""
     Y = np.fromfile(file_path, dtype=np.uint8)
@@ -9,8 +12,9 @@ def split_into_blocks(Y, block_size):
     blocks = []
     for y in range(0, height, block_size):
         for x in range(0, width, block_size):
-            block = Y[y:y + block_size, x:x + block_size]
-            blocks.append((block, (y, x)))  # Return both block and its position
+            if y + block_size <= height and x + block_size <= width:
+                block = Y[y:y + block_size, x:x + block_size]
+                blocks.append((block, (y, x)))  # Return both block and its position
     return blocks
 
 def pad_frame(Y, block_size):
@@ -56,30 +60,36 @@ def full_search(current_block, ref_frame, block_position, block_size, search_ran
 
     return best_mae, best_vector
 
-def process_frame(Y_current, ref_frame, block_size, search_range):
+def process_frame(Y_current, ref_frame, block_size, search_range, motion_vectors):
     """Process each block in the current frame using full search."""
-    # Split the current frame into blocks
     blocks = split_into_blocks(Y_current, block_size)
     
     total_mae = 0
     num_blocks = len(blocks)
     
-    # For each block, find the best matching block in the reference frame
     for current_block, block_position in blocks:
         mae, motion_vector = full_search(current_block, ref_frame, block_position, block_size, search_range)
-        if mae is not None: 
+        if mae is not None:
             total_mae += mae
+            if mae < float('inf'):  # This checks if a valid motion vector was found
+                motion_vectors.append((block_position, motion_vector))  # Store block position and motion vector
         else:
             num_blocks -= 1  
     
-    # Calculate average MAE for the frame
-    average_mae = total_mae / num_blocks
-    print(f'Frame {frame_counter + 1},')
+    average_mae = total_mae / num_blocks if num_blocks > 0 else float('inf')
     return average_mae
 
 def get_yuv_files(input_dir):
     """Get all YUV files from the directory."""
     return [f for f in os.listdir(input_dir) if f.endswith('.yuv')]
+
+def save_motion_vectors(motion_vectors, output_file):
+    """Save the motion vectors to a text file."""
+    with open(output_file, 'w') as f:
+        for (block_pos, motion_vector) in motion_vectors:
+            block_y, block_x = block_pos
+            mv_y, mv_x = motion_vector
+            f.write(f'Block Position: ({block_y}, {block_x}), Motion Vector: ({mv_y}, {mv_x})\n')
 
 # Main processing loop
 input_directory = 'y_only_files'
@@ -95,28 +105,30 @@ y_files_full_path = [os.path.join(input_directory, f) for f in y_files]
 
 # Process each frame (up to 5 frames)
 frame_counter = 0
+motion_vectors = []  # List to store motion vectors
 
 for file_path in y_files_full_path:
     Y_current = load_y_component(file_path, height, width)
     
-    # Assume a hypothetical reference frame filled with 128 for the first frame
     ref_frame = np.full((height, width), 128, dtype=np.uint8)
     
     for block_size in block_sizes:
         for search_range in search_ranges:
-            # Pad the current frame if necessary
             if (Y_current.shape[1] % block_size != 0 or Y_current.shape[0] % block_size != 0):
                 Y_padded = pad_frame(Y_current, block_size)
             else:
                 Y_padded = Y_current
 
-            # Perform full search for this block size and search range
-            avg_mae = process_frame(Y_padded, ref_frame, block_size, search_range)
+            avg_mae = process_frame(Y_padded, ref_frame, block_size, search_range, motion_vectors)
             print(f'Frame {frame_counter + 1}, Block Size {block_size}, Search Range {search_range}, Avg MAE: {avg_mae}')
 
-    # For the next iteration, set the current frame as the reference frame
     ref_frame = Y_current
     
     frame_counter += 1
     if frame_counter >= 1:
         break
+
+# Save motion vectors to a file
+output_file = 'motion_vectors.txt'
+save_motion_vectors(motion_vectors, output_file)
+print(f'Motion vectors saved to {output_file}.')
